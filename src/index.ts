@@ -11,8 +11,7 @@ dotenv.config();
  * ------------------------------
  * Change these four constants if you want a different dataset / schema / symbol.
  */
-const API_KEY =
-  process.env.DATABENTO_API_KEY ?? 'db-CiqJygNanxsQbJDyAKkMRn4fb3CB3';
+const API_KEY = process.env.DATABENTO_API_KEY ?? 'db-';
 const SYMBOL = 'MESM5'; // Micro E‑mini S&P, June‑25 contract
 const DATASET = 'GLBX.MDP3'; // CME Globex MDP 3.0 historical feed  // CME Market‑Printer (trade‑print) historical feed
 const SCHEMA = 'trades'; // Trade prints schema
