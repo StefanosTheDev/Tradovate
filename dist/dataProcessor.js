@@ -37,44 +37,64 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.stream1000TickBars = stream1000TickBars;
+// File: src/dataProcessor.ts
 const axios_1 = __importDefault(require("axios"));
 const readline = __importStar(require("node:readline"));
-const DATASET = 'GLBX.MDP3';
-const SCHEMA = 'trades';
-/** Stream raw trades (prints) from Databento */
-async function* streamTrades(apiKey, start, end, symbol) {
-    const resp = await axios_1.default.get('https://hist.databento.com/v0/timeseries.get_range', {
-        params: {
-            dataset: DATASET,
-            schema: SCHEMA,
-            symbols: symbol,
-            stype_in: 'raw_symbol', // ensure raw symbol mapping
-            start,
-            end,
-            encoding: 'json',
-        },
-        auth: { username: apiKey, password: '' },
-        responseType: 'stream',
-    });
-    const rl = readline.createInterface({ input: resp.data });
-    for await (const line of rl) {
-        if (!line.trim())
-            continue;
-        yield JSON.parse(line);
+/**
+ * Stream raw trades from Databento.
+ * Adds better error reporting (prints API error body on 4xx/5xx).
+ */
+async function* streamTrades(key, dataset, schema, start, end, symbol) {
+    try {
+        const resp = await axios_1.default.get('https://hist.databento.com/v0/timeseries.get_range', {
+            params: {
+                dataset,
+                schema,
+                symbols: symbol,
+                start,
+                end,
+                encoding: 'json',
+            },
+            auth: { username: key, password: '' },
+            responseType: 'stream',
+        });
+        const rl = readline.createInterface({ input: resp.data });
+        for await (const line of rl) {
+            if (!line.trim())
+                continue;
+            yield JSON.parse(line);
+        }
+    }
+    catch (e) {
+        if (e.response) {
+            console.error('Databento API error', e.response.status, e.response.statusText);
+            const body = await streamToString(e.response.data);
+            console.error(body);
+        }
+        throw e;
     }
 }
-/** Aggregate every 1 000 trades into one TickBar */
-async function* stream1000TickBars(apiKey, start, end, symbol) {
-    let currentBar = null;
-    let tickCount = 0;
-    let cumDelta = 0;
-    for await (const trade of streamTrades(apiKey, start, end, symbol)) {
-        const ms = Number(BigInt(trade.hd.ts_event) / 1000000n);
-        const price = Number(trade.price) / 1_000_000_000; // nano → dollars
-        const delta = trade.side === 'B' ? trade.size : -trade.size;
-        cumDelta += delta;
-        if (!currentBar) {
-            currentBar = {
+/** Convert a Node stream to string (for error bodies) */
+function streamToString(stream) {
+    const chunks = [];
+    return new Promise((res, rej) => {
+        stream.on('data', (c) => chunks.push(c));
+        stream.on('end', () => res(Buffer.concat(chunks).toString('utf8')));
+        stream.on('error', rej);
+    });
+}
+/** Aggregate every 1 000 trades into a bar */
+async function* stream1000TickBars(key, dataset, schema, start, end, symbol) {
+    let current = null;
+    let ticks = 0;
+    let delta = 0;
+    for await (const t of streamTrades(key, dataset, schema, start, end, symbol)) {
+        const ms = Number(BigInt(t.hd.ts_event) / 1000000n);
+        const price = +t.price / 1_000_000_000; // nano$ → $
+        const d = t.side === 'B' ? t.size : -t.size;
+        delta += d;
+        if (!current) {
+            current = {
                 timestamp: new Date(ms).toISOString(),
                 open: price,
                 high: price,
@@ -85,25 +105,21 @@ async function* stream1000TickBars(apiKey, start, end, symbol) {
                 cvdColor: 'gray',
             };
         }
-        currentBar.high = Math.max(currentBar.high, price);
-        currentBar.low = Math.min(currentBar.low, price);
-        currentBar.close = price;
-        currentBar.volume += 1;
-        currentBar.cvd = cumDelta;
-        tickCount++;
-        if (tickCount >= 1000) {
-            currentBar.cvdColor =
-                cumDelta > 0 ? 'green' : cumDelta < 0 ? 'red' : 'gray';
-            yield currentBar;
-            currentBar = null;
-            tickCount = 0;
-            cumDelta = 0;
+        current.high = Math.max(current.high, price);
+        current.low = Math.min(current.low, price);
+        current.close = price;
+        current.volume += 1;
+        current.cvd = delta;
+        if (++ticks >= 1000) {
+            current.cvdColor = delta > 0 ? 'green' : delta < 0 ? 'red' : 'gray';
+            yield current;
+            current = null;
+            ticks = 0;
+            delta = 0;
         }
     }
-    // Flush any final partial bar
-    if (currentBar && tickCount > 0) {
-        currentBar.cvdColor =
-            cumDelta > 0 ? 'green' : cumDelta < 0 ? 'red' : 'gray';
-        yield currentBar;
+    if (current && ticks) {
+        current.cvdColor = delta > 0 ? 'green' : delta < 0 ? 'red' : 'gray';
+        yield current;
     }
 }

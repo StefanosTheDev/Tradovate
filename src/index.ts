@@ -1,30 +1,42 @@
+// File: src/index.ts
 import * as dotenv from 'dotenv';
 import { stream1000TickBars, TickBar } from './dataProcessor';
 
 // Load environment variables
 dotenv.config();
 
-// Databento API configuration
-const API_KEY = process.env.DATABENTO_API_KEY || 'your_api_key_here';
-const SYMBOL = 'MESM5';
-const DATASET = 'GLBX.MDP3'; // Global CME MDP 3.0 historical feed
-const SCHEMA = 'trades'; // Time-and-sales (tick) data
+/**
+ * ------------------------------
+ * CONFIG SECTION
+ * ------------------------------
+ * Change these four constants if you want a different dataset / schema / symbol.
+ */
+const API_KEY =
+  process.env.DATABENTO_API_KEY ?? 'db-CiqJygNanxsQbJDyAKkMRn4fb3CB3';
+const SYMBOL = 'MESM5'; // Micro E‑mini S&P, June‑25 contract
+const DATASET = 'GLBX.MDP3'; // CME Globex MDP 3.0 historical feed  // CME Market‑Printer (trade‑print) historical feed
+const SCHEMA = 'trades'; // Trade prints schema
 
-// Trading session: May 2, 2025, 6:30 AM to 6:40 PM PDT
+// Trading session: May 2 2025, 06:30 AM → 06:40 PM PDT
 const START_TIME = '2025-05-02T06:30:00-07:00';
-const END_TIME = '2025-05-02T18:40:00-07:00';
+// First 10 minutes of the session — 06:30 → 06:40 PDT
+const END_TIME = '2025-05-02T06:40:00-07:00';
 
-// Convert to UTC
+// Abort early if key missing
+if (!API_KEY) {
+  console.error(
+    '❌  DATABENTO_API_KEY is empty or missing. Export it in your shell or .env file.'
+  );
+  process.exit(1);
+}
+
+/** Utility */
 const START_UTC = new Date(START_TIME).toISOString();
 const END_UTC = new Date(END_TIME).toISOString();
-
-// Millisecond bounds for filtering
-const START_MS = new Date(START_UTC).getTime();
-const END_MS = new Date(END_UTC).getTime();
-
-// Format timestamp in PDT as HH:MM:SS AM/PM
-function formatPDT(date: Date): string {
-  return date.toLocaleString('en-US', {
+const START_MS = Date.parse(START_UTC);
+const END_MS = Date.parse(END_UTC);
+function fmtPDT(d: Date) {
+  return d.toLocaleString('en-US', {
     timeZone: 'America/Los_Angeles',
     hour12: true,
     hour: 'numeric',
@@ -33,55 +45,35 @@ function formatPDT(date: Date): string {
   });
 }
 
+/** Main driver */
 async function run() {
-  console.log(
-    `Streaming ${SYMBOL} 1000-trade bars from ${START_TIME} to ${END_TIME} (PDT)…`
-  );
+  console.log(`Streaming ${SYMBOL} (${DATASET}/${SCHEMA}) 1 000‑trade bars…`);
 
+  let barCount = 0;
   try {
-    let barCount = 0;
     for await (const bar of stream1000TickBars(
       API_KEY,
+      DATASET,
+      SCHEMA,
       START_UTC,
       END_UTC,
       SYMBOL
     )) {
-      const barMs = new Date(bar.timestamp).getTime();
-      if (barMs < START_MS || barMs > END_MS) continue;
-
-      if (
-        bar.open == null ||
-        bar.high == null ||
-        bar.low == null ||
-        bar.close == null ||
-        bar.volume == null ||
-        bar.cvd == null ||
-        bar.cvdColor == null
-      ) {
-        console.warn(
-          `Skipping invalid bar at ${bar.timestamp}: ${JSON.stringify(bar)}`
-        );
-        continue;
-      }
+      const ms = Date.parse(bar.timestamp);
+      if (ms < START_MS || ms > END_MS) continue; // filter
 
       barCount++;
       console.log(
-        `Bar #${barCount} | ` +
-          `Time: ${formatPDT(new Date(bar.timestamp))} | ` +
-          `Open: ${bar.open.toFixed(2)} | ` +
-          `High: ${bar.high.toFixed(2)} | ` +
-          `Low: ${bar.low.toFixed(2)} | ` +
-          `Close: ${bar.close.toFixed(2)} | ` +
-          `Volume: ${bar.volume} | ` +
-          `CVD: ${bar.cvd.toFixed(2)} | ` +
-          `Color: ${bar.cvdColor}`
+        `Bar #${barCount}`.padEnd(10) +
+          `Time: ${fmtPDT(new Date(ms))} | ` +
+          `O:${bar.open.toFixed(2)} H:${bar.high.toFixed(2)} ` +
+          `L:${bar.low.toFixed(2)} C:${bar.close.toFixed(2)} ` +
+          `Vol:${bar.volume} CVD:${bar.cvd.toFixed(0)} (${bar.cvdColor})`
       );
     }
-    console.log(
-      `\n✔ Done — printed ${barCount} 1000-trade bars for ${SYMBOL} between ${START_TIME} and ${END_TIME}.`
-    );
-  } catch (error) {
-    console.error(error);
+    console.log(`\n✔ Printed ${barCount} bars`);
+  } catch (err: any) {
+    console.error('⛔  Stream error:\n', err.message);
   }
 }
 
