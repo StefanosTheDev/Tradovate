@@ -1,4 +1,5 @@
-// File: src/dataProcessor.ts  (1 000 **contracts** per bar, exact split + running CVD)
+// ------------------------------
+// File: src/dataProcessor.ts
 // ------------------------------
 import axios from 'axios';
 import * as readline from 'node:readline';
@@ -10,19 +11,19 @@ export interface Trade {
   side: 'B' | 'S';
 }
 
-export interface TickBar {
-  timestamp: string; // first trade timestamp (ISO)
+export interface MinuteBar {
+  timestamp: string; // ISO minute start
   open: number;
   high: number;
   low: number;
   close: number;
-  volume: number; // exactly 1 000 contracts
-  cvd: number; // **running** cumulative delta
-  delta: number; // bar‑level delta (buy‑sell)
-  cvdColor: 'green' | 'red' | 'gray'; // based on bar delta
+  volume: number;
+  delta: number; // bar-level delta
+  cvd: number; // running cumulative delta
+  cvdColor: 'green' | 'red' | 'gray';
 }
 
-const PAGE_MS = 5 * 60 * 1000; // 5‑minute paging window
+const PAGE_MS = 5 * 60 * 1000; // 5-minute paging window
 
 async function* streamTradesPaged(
   key: string,
@@ -37,7 +38,6 @@ async function* streamTradesPaged(
 
   while (curStart < end) {
     const curEnd = Math.min(curStart + PAGE_MS, end);
-
     const resp = await axios.get(
       'https://hist.databento.com/v0/timeseries.get_range',
       {
@@ -62,31 +62,59 @@ async function* streamTradesPaged(
       yield trade;
       lastTs = Number(BigInt(trade.hd.ts_event) / 1_000_000n);
     }
-
     curStart = lastTs + 1;
   }
 }
 
 /**
- * Build bars of **exactly 1 000 contracts**. If a trade overfills the
- * bar, we split it: part goes to complete current bar, remainder starts
- * the next. `cvd` is *running* cumulative delta across the session while
- * `delta` holds the bar’s own buy‑minus‑sell.
+ * Decide bar color based on price action per Tradovate's rules.
+ * - If strongUpDown=false: compare open vs close
+ * - If strongUpDown=true: compare close vs previous bar's high/low
  */
-export async function* stream1000TickBars(
+function getBarColor(
+  close: number,
+  open: number,
+  prevHigh: number | null,
+  prevLow: number | null,
+  strongUpDown: boolean
+): 'green' | 'red' | 'gray' {
+  if (!strongUpDown) {
+    if (close > open) return 'green';
+    if (close < open) return 'red';
+    return 'gray';
+  } else {
+    if (prevHigh === null || prevLow === null) {
+      // fallback to simple open/close
+      if (close > open) return 'green';
+      if (close < open) return 'red';
+      return 'gray';
+    }
+    if (close > prevHigh) return 'green';
+    if (close < prevLow) return 'red';
+    return 'gray';
+  }
+}
+
+/**
+ * Build 1-minute bars, aggregating trades into OHLCV, delta, and running CVD.
+ * Colors reflect Tradovate Cumulative Delta study behavior.
+ */
+export async function* streamOneMinuteBars(
   key: string,
   dataset: string,
   schema: string,
   startUtc: string,
   endUtc: string,
-  symbol: string
-): AsyncGenerator<TickBar> {
-  let bar: TickBar | null = null;
-  let barContracts = 0; // contracts in current bar
-  let barDelta = 0; // net delta in current bar
-  let runningCVD = 0; // cumulative delta over the day
+  symbol: string,
+  strongUpDown = false // match Tradovate setting
+): AsyncGenerator<MinuteBar> {
+  let currentBar: MinuteBar | null = null;
+  let runningCVD = 0;
+  let prevCVD = 0;
+  let prevHigh: number | null = null;
+  let prevLow: number | null = null;
 
-  for await (let t of streamTradesPaged(
+  for await (const t of streamTradesPaged(
     key,
     dataset,
     schema,
@@ -94,53 +122,67 @@ export async function* stream1000TickBars(
     endUtc,
     symbol
   )) {
-    let remaining = t.size; // contracts still to allocate
-    const sign = t.side === 'B' ? 1 : -1; // +buy  ‑sell
     const px = +t.price / 1_000_000_000;
     const tsMs = Number(BigInt(t.hd.ts_event) / 1_000_000n);
+    const minuteStart = new Date(tsMs);
+    minuteStart.setSeconds(0, 0);
+    const minuteIso = minuteStart.toISOString();
+    const sign = t.side === 'B' ? 1 : -1;
+    const delta = sign * t.size;
 
-    while (remaining > 0) {
-      // start new bar if none exists
-      if (!bar) {
-        bar = {
-          timestamp: new Date(tsMs).toISOString(),
-          open: px,
-          high: px,
-          low: px,
-          close: px,
-          volume: 0,
-          cvd: 0,
-          delta: 0,
-          cvdColor: 'gray',
-        };
-        barContracts = 0;
-        barDelta = 0;
+    // start new bar if none or minute changed
+    if (!currentBar || currentBar.timestamp !== minuteIso) {
+      // emit and finalize previous bar
+      if (currentBar) {
+        currentBar.cvd = runningCVD;
+        currentBar.cvdColor = getBarColor(
+          currentBar.close,
+          currentBar.open,
+          prevHigh,
+          prevLow,
+          strongUpDown
+        );
+        yield currentBar;
+        prevCVD = runningCVD;
+        prevHigh = currentBar.high;
+        prevLow = currentBar.low;
       }
-
-      // contracts we can still fit into this bar
-      const space = 1_000 - barContracts;
-      const fill = Math.min(space, remaining);
-
-      // update OHLVC with the *trade price* once (price doesn’t change within split)
-      bar.high = Math.max(bar.high, px);
-      bar.low = Math.min(bar.low, px);
-      bar.close = px;
-
-      bar.volume += fill;
-      barDelta += sign * fill;
-      runningCVD += sign * fill;
-      bar.cvd = runningCVD; // running value for each split
-
-      barContracts += fill;
-      remaining -= fill;
-
-      // if bar filled exactly, emit and reset
-      if (barContracts === 1_000) {
-        bar.cvdColor = barDelta > 0 ? 'green' : barDelta < 0 ? 'red' : 'gray';
-        yield bar;
-        bar = null;
-      }
+      // init new bar
+      currentBar = {
+        timestamp: minuteIso,
+        open: px,
+        high: px,
+        low: px,
+        close: px,
+        volume: t.size,
+        delta,
+        cvd: runningCVD + delta,
+        cvdColor: 'gray',
+      };
+    } else {
+      // update existing bar stats
+      currentBar.high = Math.max(currentBar.high, px);
+      currentBar.low = Math.min(currentBar.low, px);
+      currentBar.close = px;
+      currentBar.volume += t.size;
+      currentBar.delta += delta;
+    }
+    runningCVD += delta;
+    if (currentBar) {
+      currentBar.cvd = runningCVD;
     }
   }
-  // discard unfinished bar (<1 000 contracts)
+
+  // emit final bar if exists
+  if (currentBar) {
+    currentBar.cvd = runningCVD;
+    currentBar.cvdColor = getBarColor(
+      currentBar.close,
+      currentBar.open,
+      prevHigh,
+      prevLow,
+      strongUpDown
+    );
+    yield currentBar;
+  }
 }

@@ -2,22 +2,23 @@
 // File: src/index.ts
 // ------------------------------
 import * as dotenv from 'dotenv';
-import { stream1000TickBars } from './dataProcessor';
+import { streamOneMinuteBars } from './dataProcessor';
 
 dotenv.config();
 
-// ==== CONFIG =====
 const API_KEY = process.env.DATABENTO_API_KEY ?? '';
-const SYMBOL = 'MESM5'; // contract
-const DATASET = 'GLBX.MDP3'; // CME Globex MDP‑3.0
-const SCHEMA = 'trades'; // trade prints
+const SYMBOL = 'MESM5';
+const DATASET = 'GLBX.MDP3';
+const SCHEMA = 'trades';
+// set to true if you want "Strong Up/Down" coloring
+const STRONG_UP_DOWN = true; // enable "Strong Up/Down" coloring to match Tradovate pattern
 
-// first 10 minutes of 2025‑05‑02 regular session (PDT)
+// 1-minute bars for 2025-05-02 06:30→06:40 PDT
 const START_TIME = '2025-05-02T06:30:00-07:00';
-const END_TIME = '2025-05-02T06:40:00-07:00';
+const END_TIME = '2025-05-02T06:50:00-07:00';
 
 if (!API_KEY) {
-  console.error('❌  Missing DATABENTO_API_KEY');
+  console.error('❌ Missing DATABENTO_API_KEY');
   process.exit(1);
 }
 
@@ -36,16 +37,17 @@ function fmtPDT(d: Date) {
 
 async function run() {
   console.log(
-    `Streaming ${SYMBOL} 1k‑trade bars… (${START_TIME} → ${END_TIME} PDT)`
+    `Streaming ${SYMBOL} 1-minute bars… (${START_TIME} → ${END_TIME} PDT)`
   );
   let n = 0;
-  for await (const bar of stream1000TickBars(
+  for await (const bar of streamOneMinuteBars(
     API_KEY,
     DATASET,
     SCHEMA,
     START_UTC,
     END_UTC,
-    SYMBOL
+    SYMBOL,
+    STRONG_UP_DOWN
   )) {
     console.log(
       `Bar #${++n}`.padEnd(8) +
