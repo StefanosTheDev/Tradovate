@@ -4,15 +4,15 @@ import { streamOneMinuteBars } from './dataProcessor';
 import { Ema } from './ema';
 
 dotenv.config();
-
 const API_KEY = process.env.DATABENTO_API_KEY ?? '';
 const SYMBOL = 'MESM5';
 const DATASET = 'GLBX.MDP3';
 const SCHEMA = 'trades';
-
+// const START_TIME = '2025-05-02T06:00:00-07:00';
+// const END_TIME = '2025-05-02T07:30:00-07:00';
 // 1-minute bars time window (PDT)
-const START_TIME = '2025-05-02T06:30:00-07:00';
-const END_TIME = '2025-05-02T07:30:00-07:00';
+const START_TIME = '2025-05-04T15:00:00-07:00'; // May 4 2025, 3:00 PM PDT
+const END_TIME = '2025-05-05T13:00:00-07:00'; // May 5 2025, 1:00 PM PDT
 
 if (!API_KEY) {
   console.error('❌ Missing DATABENTO_API_KEY');
@@ -32,10 +32,15 @@ function fmtPDT(d: Date): string {
   });
 }
 
-export async function Run1MinChart(): Promise<void> {
-  console.log(
-    `📊 Streaming ${SYMBOL} 1-min bars (${START_TIME} → ${END_TIME} PDT)`
-  );
+type Logger = (msg: string) => void;
+
+/**
+ * Streams 1-min bars; logs via `logger()`.
+ */
+export async function Run1MinChart(
+  logger: Logger = console.log
+): Promise<void> {
+  logger(`📊 Streaming ${SYMBOL} 1-min bars (${START_TIME} → ${END_TIME} PDT)`);
   let count = 0;
 
   for await (const bar of streamOneMinuteBars(
@@ -47,7 +52,7 @@ export async function Run1MinChart(): Promise<void> {
     SYMBOL,
     true
   )) {
-    console.log(
+    logger(
       `#${++count}`.padEnd(5) +
         `${fmtPDT(new Date(bar.timestamp))} | ` +
         `O:${bar.open.toFixed(2)} H:${bar.high.toFixed(2)} ` +
@@ -56,11 +61,16 @@ export async function Run1MinChart(): Promise<void> {
     );
   }
 
-  console.log(`✔ Finished streaming ${count} bars.`);
+  logger(`✔ Finished streaming ${count} bars.`);
 }
 
-export async function Run22EMAChart(): Promise<void> {
-  console.log(
+/**
+ * Calculates 22-EMA over 1-min closes; logs via `logger()`.
+ */
+export async function Run22EMAChart(
+  logger: Logger = console.log
+): Promise<void> {
+  logger(
     `📈 Calculating 22-EMA on 1-min bars (${START_TIME} → ${END_TIME} PDT)`
   );
   const ema = new Ema([22]);
@@ -77,7 +87,7 @@ export async function Run22EMAChart(): Promise<void> {
   )) {
     const close = bar.close;
     const [ema22] = ema.add(close);
-    console.log(
+    logger(
       `#${++count}`.padEnd(5) +
         `${fmtPDT(new Date(bar.timestamp))} | ` +
         `Close: ${close.toFixed(2)} | ` +
@@ -85,5 +95,5 @@ export async function Run22EMAChart(): Promise<void> {
     );
   }
 
-  console.log(`✔ Finished EMA for ${count} bars.`);
+  logger(`✔ Finished EMA for ${count} bars.`);
 }

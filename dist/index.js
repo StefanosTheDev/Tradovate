@@ -33,21 +33,22 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-// ------------------------------
+exports.Run1MinChart = Run1MinChart;
+exports.Run22EMAChart = Run22EMAChart;
 // File: src/index.ts
-// ------------------------------
 const dotenv = __importStar(require("dotenv"));
 const dataProcessor_1 = require("./dataProcessor");
+const ema_1 = require("./ema");
 dotenv.config();
 const API_KEY = process.env.DATABENTO_API_KEY ?? '';
 const SYMBOL = 'MESM5';
 const DATASET = 'GLBX.MDP3';
 const SCHEMA = 'trades';
-// set to true if you want "Strong Up/Down" coloring
-const STRONG_UP_DOWN = true; // enable "Strong Up/Down" coloring to match Tradovate pattern
-// 1-minute bars for 2025-05-02 06:30→06:40 PDT
-const START_TIME = '2025-05-02T06:30:00-07:00';
-const END_TIME = '2025-05-02T06:50:00-07:00';
+// const START_TIME = '2025-05-02T06:00:00-07:00';
+// const END_TIME = '2025-05-02T07:30:00-07:00';
+// 1-minute bars time window (PDT)
+const START_TIME = '2025-05-04T15:00:00-07:00'; // May 4 2025, 3:00 PM PDT
+const END_TIME = '2025-05-05T13:00:00-07:00'; // May 5 2025, 1:00 PM PDT
 if (!API_KEY) {
     console.error('❌ Missing DATABENTO_API_KEY');
     process.exit(1);
@@ -63,16 +64,35 @@ function fmtPDT(d) {
         second: '2-digit',
     });
 }
-async function run() {
-    console.log(`Streaming ${SYMBOL} 1-minute bars… (${START_TIME} → ${END_TIME} PDT)`);
-    let n = 0;
-    for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, STRONG_UP_DOWN)) {
-        console.log(`Bar #${++n}`.padEnd(8) +
-            `${fmtPDT(new Date(bar.timestamp))}  ` +
+/**
+ * Streams 1-min bars; logs via `logger()`.
+ */
+async function Run1MinChart(logger = console.log) {
+    logger(`📊 Streaming ${SYMBOL} 1-min bars (${START_TIME} → ${END_TIME} PDT)`);
+    let count = 0;
+    for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, true)) {
+        logger(`#${++count}`.padEnd(5) +
+            `${fmtPDT(new Date(bar.timestamp))} | ` +
             `O:${bar.open.toFixed(2)} H:${bar.high.toFixed(2)} ` +
-            `L:${bar.low.toFixed(2)} C:${bar.close.toFixed(2)}  ` +
-            `Vol:${bar.volume}  CVD:${bar.cvd} (${bar.cvdColor})`);
+            `L:${bar.low.toFixed(2)} C:${bar.close.toFixed(2)} | ` +
+            `Vol:${bar.volume} | CVD:${bar.cvd} (${bar.cvdColor})`);
     }
-    console.log(`✔ Finished — ${n} bars`);
+    logger(`✔ Finished streaming ${count} bars.`);
 }
-run();
+/**
+ * Calculates 22-EMA over 1-min closes; logs via `logger()`.
+ */
+async function Run22EMAChart(logger = console.log) {
+    logger(`📈 Calculating 22-EMA on 1-min bars (${START_TIME} → ${END_TIME} PDT)`);
+    const ema = new ema_1.Ema([22]);
+    let count = 0;
+    for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, false)) {
+        const close = bar.close;
+        const [ema22] = ema.add(close);
+        logger(`#${++count}`.padEnd(5) +
+            `${fmtPDT(new Date(bar.timestamp))} | ` +
+            `Close: ${close.toFixed(2)} | ` +
+            `EMA-22: ${ema22 !== null ? ema22.toFixed(2) : '---'}`);
+    }
+    logger(`✔ Finished EMA for ${count} bars.`);
+}

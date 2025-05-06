@@ -37,9 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.streamOneMinuteBars = streamOneMinuteBars;
-// ------------------------------
 // File: src/dataProcessor.ts
-// ------------------------------
 const axios_1 = __importDefault(require("axios"));
 const readline = __importStar(require("node:readline"));
 const PAGE_MS = 5 * 60 * 1000; // 5-minute paging window
@@ -72,11 +70,6 @@ async function* streamTradesPaged(key, dataset, schema, startUtc, endUtc, symbol
         curStart = lastTs + 1;
     }
 }
-/**
- * Decide bar color based on price action per Tradovate's rules.
- * - If strongUpDown=false: compare open vs close
- * - If strongUpDown=true: compare close vs previous bar's high/low
- */
 function getBarColor(close, open, prevHigh, prevLow, strongUpDown) {
     if (!strongUpDown) {
         if (close > open)
@@ -87,7 +80,6 @@ function getBarColor(close, open, prevHigh, prevLow, strongUpDown) {
     }
     else {
         if (prevHigh === null || prevLow === null) {
-            // fallback to simple open/close
             if (close > open)
                 return 'green';
             if (close < open)
@@ -101,15 +93,9 @@ function getBarColor(close, open, prevHigh, prevLow, strongUpDown) {
         return 'gray';
     }
 }
-/**
- * Build 1-minute bars, aggregating trades into OHLCV, delta, and running CVD.
- * Colors reflect Tradovate Cumulative Delta study behavior.
- */
-async function* streamOneMinuteBars(key, dataset, schema, startUtc, endUtc, symbol, strongUpDown = false // match Tradovate setting
-) {
+async function* streamOneMinuteBars(key, dataset, schema, startUtc, endUtc, symbol, strongUpDown = false) {
     let currentBar = null;
     let runningCVD = 0;
-    let prevCVD = 0;
     let prevHigh = null;
     let prevLow = null;
     for await (const t of streamTradesPaged(key, dataset, schema, startUtc, endUtc, symbol)) {
@@ -120,18 +106,14 @@ async function* streamOneMinuteBars(key, dataset, schema, startUtc, endUtc, symb
         const minuteIso = minuteStart.toISOString();
         const sign = t.side === 'B' ? 1 : -1;
         const delta = sign * t.size;
-        // start new bar if none or minute changed
         if (!currentBar || currentBar.timestamp !== minuteIso) {
-            // emit and finalize previous bar
             if (currentBar) {
                 currentBar.cvd = runningCVD;
                 currentBar.cvdColor = getBarColor(currentBar.close, currentBar.open, prevHigh, prevLow, strongUpDown);
                 yield currentBar;
-                prevCVD = runningCVD;
                 prevHigh = currentBar.high;
                 prevLow = currentBar.low;
             }
-            // init new bar
             currentBar = {
                 timestamp: minuteIso,
                 open: px,
@@ -145,7 +127,6 @@ async function* streamOneMinuteBars(key, dataset, schema, startUtc, endUtc, symb
             };
         }
         else {
-            // update existing bar stats
             currentBar.high = Math.max(currentBar.high, px);
             currentBar.low = Math.min(currentBar.low, px);
             currentBar.close = px;
@@ -153,13 +134,10 @@ async function* streamOneMinuteBars(key, dataset, schema, startUtc, endUtc, symb
             currentBar.delta += delta;
         }
         runningCVD += delta;
-        if (currentBar) {
+        if (currentBar)
             currentBar.cvd = runningCVD;
-        }
     }
-    // emit final bar if exists
     if (currentBar) {
-        currentBar.cvd = runningCVD;
         currentBar.cvdColor = getBarColor(currentBar.close, currentBar.open, prevHigh, prevLow, strongUpDown);
         yield currentBar;
     }
