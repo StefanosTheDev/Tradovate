@@ -14,8 +14,8 @@ const SCHEMA = 'trades';
 const STRONG_UP_DOWN = true; // enable "Strong Up/Down" coloring to match Tradovate pattern
 
 // 1-minute bars for 2025-05-02 06:30→06:40 PDT
-const START_TIME = '2025-05-02T06:30:00-07:00';
-const END_TIME = '2025-05-02T06:50:00-07:00';
+const START_TIME = '2025-05-02T06:50:00-07:00';
+const END_TIME = '2025-05-02T07:30:00-07:00';
 
 if (!API_KEY) {
   console.error('❌ Missing DATABENTO_API_KEY');
@@ -35,7 +35,7 @@ function fmtPDT(d: Date) {
   });
 }
 
-async function run() {
+export async function Run1MinChart() {
   console.log(
     `Streaming ${SYMBOL} 1-minute bars… (${START_TIME} → ${END_TIME} PDT)`
   );
@@ -60,4 +60,4 @@ async function run() {
   console.log(`✔ Finished — ${n} bars`);
 }
 
-run();
+//Run1MinChart();
