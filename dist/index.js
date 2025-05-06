@@ -35,20 +35,20 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Run1MinChart = Run1MinChart;
 exports.Run22EMAChart = Run22EMAChart;
+exports.RunBreakouts = RunBreakouts;
 // File: src/index.ts
 const dotenv = __importStar(require("dotenv"));
 const dataProcessor_1 = require("./dataProcessor");
 const ema_1 = require("./ema");
+const breakoutIndicator_1 = require("./breakoutIndicator");
 dotenv.config();
 const API_KEY = process.env.DATABENTO_API_KEY ?? '';
 const SYMBOL = 'MESM5';
 const DATASET = 'GLBX.MDP3';
 const SCHEMA = 'trades';
-// const START_TIME = '2025-05-02T06:00:00-07:00';
-// const END_TIME = '2025-05-02T07:30:00-07:00';
-// 1-minute bars time window (PDT)
-const START_TIME = '2025-05-04T15:00:00-07:00'; // May 4 2025, 3:00 PM PDT
-const END_TIME = '2025-05-05T13:00:00-07:00'; // May 5 2025, 1:00 PM PDT
+// Example window: May 2, 2025, 06:30–07:30 PDT
+const START_TIME = '2025-05-02T06:30:00-07:00';
+const END_TIME = '2025-05-02T07:30:00-07:00';
 if (!API_KEY) {
     console.error('❌ Missing DATABENTO_API_KEY');
     process.exit(1);
@@ -65,13 +65,13 @@ function fmtPDT(d) {
     });
 }
 /**
- * Streams 1-min bars; logs via `logger()`.
+ * Stream raw 1-minute bars: O, H, L, C, Vol, CVD, color
  */
 async function Run1MinChart(logger = console.log) {
     logger(`📊 Streaming ${SYMBOL} 1-min bars (${START_TIME} → ${END_TIME} PDT)`);
     let count = 0;
     for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, true)) {
-        logger(`#${++count}`.padEnd(5) +
+        logger(`#${++count}`.padEnd(4) +
             `${fmtPDT(new Date(bar.timestamp))} | ` +
             `O:${bar.open.toFixed(2)} H:${bar.high.toFixed(2)} ` +
             `L:${bar.low.toFixed(2)} C:${bar.close.toFixed(2)} | ` +
@@ -80,19 +80,41 @@ async function Run1MinChart(logger = console.log) {
     logger(`✔ Finished streaming ${count} bars.`);
 }
 /**
- * Calculates 22-EMA over 1-min closes; logs via `logger()`.
+ * Stream 22-period EMA over 1-min closes
  */
 async function Run22EMAChart(logger = console.log) {
-    logger(`📈 Calculating 22-EMA on 1-min bars (${START_TIME} → ${END_TIME} PDT)`);
-    const ema = new ema_1.Ema([22]);
+    logger(`📈 Streaming 22-EMA (${START_TIME} → ${END_TIME} PDT)`);
+    const emaCalc = new ema_1.Ema([22]);
     let count = 0;
     for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, false)) {
-        const close = bar.close;
-        const [ema22] = ema.add(close);
-        logger(`#${++count}`.padEnd(5) +
-            `${fmtPDT(new Date(bar.timestamp))} | ` +
-            `Close: ${close.toFixed(2)} | ` +
-            `EMA-22: ${ema22 !== null ? ema22.toFixed(2) : '---'}`);
+        const [ema22] = emaCalc.add(bar.close);
+        logger(`#${++count}`.padEnd(4) +
+            `${fmtPDT(new Date(bar.timestamp))} | Close:${bar.close.toFixed(2)} | ` +
+            `EMA-22:${ema22 !== null ? ema22.toFixed(2) : '---'}`);
     }
     logger(`✔ Finished EMA for ${count} bars.`);
+}
+/**
+ * Run breakout detection using cumulative delta trendline
+ */
+async function RunBreakouts(logger = console.log, cfg = { windowSize: 5, offsetK: 0, threshold: 0, confirmBars: 1 }) {
+    logger(`🔔 Breakout detection (window=${cfg.windowSize}, thresh=${cfg.threshold * 100}%, confirm=${cfg.confirmBars})`);
+    const bi = new breakoutIndicator_1.BreakoutIndicator(cfg);
+    let count = 0;
+    for await (const bar of (0, dataProcessor_1.streamOneMinuteBars)(API_KEY, DATASET, SCHEMA, START_UTC, END_UTC, SYMBOL, false)) {
+        const time = fmtPDT(new Date(bar.timestamp));
+        const res = bi.update(time, bar.open, bar.close);
+        if (!res) {
+            logger(`#${++count}`.padEnd(4) +
+                `${time} | Close:${bar.close.toFixed(2)} | waiting...`);
+        }
+        else {
+            const { signal, level } = res;
+            logger(`#${++count}`.padEnd(4) +
+                `${time} | Close:${bar.close.toFixed(2)} ` +
+                `Signal:${signal}` +
+                (signal !== 'HOLD' ? `@${level.toFixed(2)}` : ''));
+        }
+    }
+    logger(`✔ Breakout stream complete (${count} bars)`);
 }
