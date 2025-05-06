@@ -1,21 +1,32 @@
+// File: src/server.ts
 import express, { Request, Response } from 'express';
-import { Run1MinChart } from './index';
+import { Run1MinChart, Run22EMAChart } from './index';
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(express.json());
 
-// Get 1 Min Chart
-app.get('/1Min', (req: Request, res: Response) => {
-  Run1MinChart();
-  res.send('Hello from TypeScript Express Server!');
+app.get('/1Min', async (_req: Request, res: Response) => {
+  try {
+    await Run1MinChart();
+    res.send('✔ 1-Min Chart stream complete');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('❌ Error streaming 1-Min Chart');
+  }
 });
 
-app.get('/22EMA', (req: Request, res: Response) => {
-  res.send('/Hello From 22 EMA');
+app.get('/22EMA', async (_req: Request, res: Response) => {
+  try {
+    await Run22EMAChart();
+    res.send('✔ 22-EMA stream complete');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('❌ Error streaming 22-EMA');
+  }
 });
-// Start server
+
 app.listen(port, () => {
-  console.log(`🚀 Server is running on http://localhost:${port}`);
+  console.log(`🚀 Server listening on http://localhost:${port}`);
 });

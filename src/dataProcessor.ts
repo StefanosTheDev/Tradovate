@@ -1,12 +1,10 @@
-// ------------------------------
 // File: src/dataProcessor.ts
-// ------------------------------
 import axios from 'axios';
 import * as readline from 'node:readline';
 
 export interface Trade {
   hd: { ts_event: string };
-  price: string; // nano‑dollars
+  price: string; // nano-dollars
   size: number; // contracts in this print
   side: 'B' | 'S';
 }
@@ -66,11 +64,6 @@ async function* streamTradesPaged(
   }
 }
 
-/**
- * Decide bar color based on price action per Tradovate's rules.
- * - If strongUpDown=false: compare open vs close
- * - If strongUpDown=true: compare close vs previous bar's high/low
- */
 function getBarColor(
   close: number,
   open: number,
@@ -84,7 +77,6 @@ function getBarColor(
     return 'gray';
   } else {
     if (prevHigh === null || prevLow === null) {
-      // fallback to simple open/close
       if (close > open) return 'green';
       if (close < open) return 'red';
       return 'gray';
@@ -95,10 +87,6 @@ function getBarColor(
   }
 }
 
-/**
- * Build 1-minute bars, aggregating trades into OHLCV, delta, and running CVD.
- * Colors reflect Tradovate Cumulative Delta study behavior.
- */
 export async function* streamOneMinuteBars(
   key: string,
   dataset: string,
@@ -106,11 +94,10 @@ export async function* streamOneMinuteBars(
   startUtc: string,
   endUtc: string,
   symbol: string,
-  strongUpDown = false // match Tradovate setting
+  strongUpDown = false
 ): AsyncGenerator<MinuteBar> {
   let currentBar: MinuteBar | null = null;
   let runningCVD = 0;
-  let prevCVD = 0;
   let prevHigh: number | null = null;
   let prevLow: number | null = null;
 
@@ -130,9 +117,7 @@ export async function* streamOneMinuteBars(
     const sign = t.side === 'B' ? 1 : -1;
     const delta = sign * t.size;
 
-    // start new bar if none or minute changed
     if (!currentBar || currentBar.timestamp !== minuteIso) {
-      // emit and finalize previous bar
       if (currentBar) {
         currentBar.cvd = runningCVD;
         currentBar.cvdColor = getBarColor(
@@ -143,11 +128,9 @@ export async function* streamOneMinuteBars(
           strongUpDown
         );
         yield currentBar;
-        prevCVD = runningCVD;
         prevHigh = currentBar.high;
         prevLow = currentBar.low;
       }
-      // init new bar
       currentBar = {
         timestamp: minuteIso,
         open: px,
@@ -160,22 +143,18 @@ export async function* streamOneMinuteBars(
         cvdColor: 'gray',
       };
     } else {
-      // update existing bar stats
       currentBar.high = Math.max(currentBar.high, px);
       currentBar.low = Math.min(currentBar.low, px);
       currentBar.close = px;
       currentBar.volume += t.size;
       currentBar.delta += delta;
     }
+
     runningCVD += delta;
-    if (currentBar) {
-      currentBar.cvd = runningCVD;
-    }
+    if (currentBar) currentBar.cvd = runningCVD;
   }
 
-  // emit final bar if exists
   if (currentBar) {
-    currentBar.cvd = runningCVD;
     currentBar.cvdColor = getBarColor(
       currentBar.close,
       currentBar.open,
