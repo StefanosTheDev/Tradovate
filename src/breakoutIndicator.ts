@@ -1,89 +1,47 @@
 // File: src/breakoutIndicator.ts
-export type BreakoutSignal = 'BUY' | 'SELL' | 'HOLD';
-
 export interface BreakoutCfg {
-  windowSize: number; // number of bars for regression (default 5)
-  offsetK: number; // σ-multiplier for support/resistance (default 1)
-  threshold: number; // fraction above/below for breakout (e.g., 0.005 = 0.5%)
-  confirmBars: number; // number of consecutive bars to confirm signal (default 1)
+  windowSize: number;
+  threshold: number; // e.g. 0 = immediate, 0.001 = 0.1%
+  confirmBars: number; // consecutive confirmations
 }
 
-export interface BreakoutResult {
-  timestamp: string; // bar timestamp
-  close: number; // bar close price
-  barColor: 'green' | 'red' | 'gray';
-  slope: number;
-  intercept: number;
-  support: number;
-  resistance: number;
-  signal: BreakoutSignal;
-  level: number | null; // support or resistance level of breakout
-}
-
-import { TrendlineIndicator } from './trendIndicator';
-
-/**
- * Builds on TrendlineIndicator to detect breakouts by color & threshold.
- */
 export class BreakoutIndicator {
-  private ti: TrendlineIndicator;
-  private lastSignal: BreakoutSignal = 'HOLD';
-  private consecCount = 0;
-
-  constructor(private cfg: BreakoutCfg) {
-    this.ti = new TrendlineIndicator(cfg.windowSize, cfg.offsetK);
-  }
+  private closes: number[] = [];
+  private lastSignals: string[] = [];
+  constructor(private cfg: BreakoutCfg) {}
 
   /**
-   * Process a new bar: returns null until we have a trendline, then BreakoutResult each bar.
+   * @param close   bar close
+   * @param open    bar open
+   * @param mS, bS  support slope/intercept
+   * @param mR, bR  resistance slope/intercept
    */
-  update(
-    timestamp: string,
+  step(
+    close: number,
     open: number,
-    close: number
-  ): BreakoutResult | null {
-    const trend = this.ti.update(close);
-    if (!trend) return null;
+    mS: number,
+    bS: number,
+    mR: number,
+    bR: number
+  ): string {
+    const x = this.cfg.windowSize - 1;
+    const sup = mS * x + bS;
+    const res = mR * x + bR;
+    let sig: string;
+    const isGreen = close > open;
+    if (isGreen && close > res * (1 + this.cfg.threshold)) sig = 'BUY';
+    else if (!isGreen && close < sup * (1 - this.cfg.threshold)) sig = 'SELL';
+    else sig = 'HOLD';
 
-    const { slope, intercept, support, resistance } = trend;
-    const barColor = close > open ? 'green' : close < open ? 'red' : 'gray';
-    let signal: BreakoutSignal = 'HOLD';
-    let level: number | null = null;
+    this.lastSignals.push(sig);
+    if (this.lastSignals.length > this.cfg.confirmBars)
+      this.lastSignals.shift();
 
-    // detect breakout
-    if (close > resistance * (1 + this.cfg.threshold) && barColor === 'green') {
-      signal = 'BUY';
-      level = resistance;
-    } else if (
-      close < support * (1 - this.cfg.threshold) &&
-      barColor === 'red'
-    ) {
-      signal = 'SELL';
-      level = support;
-    }
-
-    // consecutive confirmation
-    if (signal === this.lastSignal) {
-      this.consecCount++;
-    } else {
-      this.lastSignal = signal;
-      this.consecCount = 1;
-    }
-    if (signal !== 'HOLD' && this.consecCount < this.cfg.confirmBars) {
-      signal = 'HOLD';
-      level = null;
-    }
-
-    return {
-      timestamp,
-      close,
-      barColor,
-      slope,
-      intercept,
-      support,
-      resistance,
-      signal,
-      level,
-    };
+    if (
+      this.lastSignals.length === this.cfg.confirmBars &&
+      this.lastSignals.every((s) => s === sig)
+    )
+      return sig;
+    return 'HOLD';
   }
 }
