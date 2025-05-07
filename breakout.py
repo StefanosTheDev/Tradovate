@@ -30,7 +30,7 @@ SYMBOL  = 'MESM5'
 # ── Helper Streams ─────────────────────────────────────────────────────────────
 def stream_trades_paged(key, dataset, schema, start_utc, end_utc, symbol):
     cur_start = int(datetime.fromisoformat(start_utc).timestamp() * 1000)
-    end_ms    = int(datetime.fromisoformat(end_utc).timestamp()   * 1000)
+    end_ms    = int(datetime.fromisoformat(end_utc).timestamp() * 1000)
     while cur_start < end_ms:
         cur_end = min(cur_start + PAGE_MS, end_ms)
         resp = requests.get(
@@ -59,7 +59,7 @@ def stream_trades_paged(key, dataset, schema, start_utc, end_utc, symbol):
                    'ts_ms': ts_ms}
         cur_start = last_ts + 1
 
-
+# ── CVD bar aggregation ────────────────────────────────────────────────────────
 def get_cvd_color(close, open_, prev_high, prev_low, strong):
     if not strong:
         if close > open_: return 'green'
@@ -131,7 +131,6 @@ def check_trend_line(support, pivot, slope, y):
     if not support and diffs.min() < -1e-5: return -1.0
     return (diffs ** 2).sum()
 
-
 def optimize_slope(support, pivot, init_slope, y):
     slope_unit     = (y.max() - y.min()) / len(y)
     opt_step, min_step = 1.0, 1e-4
@@ -163,7 +162,6 @@ def optimize_slope(support, pivot, init_slope, y):
 
     best_intercept = -best_slope * pivot + y[pivot]
     return best_slope, best_intercept
-
 
 def fit_trendlines_window(y):
     N         = len(y)
@@ -199,9 +197,10 @@ def fmt_pdt(iso_str):
 
 # ── Main Logic with Reversal Filter, Stop-Loss & Take-Profit ─────────────────
 def main():
-    key = "db-HhbTYsRc4EdgKYWgHpRL5qSnw8qEC"
+    # Read API key from environment
+    key = "db-MQKaxTdmgf7f89H44fmUTLPJRgUkJ"
     if not key:
-        print("❌ Please set DATABENTO_API_KEY", file=sys.stderr)
+        print("❌ Please set the DATABENTO_API_KEY environment variable", file=sys.stderr)
         sys.exit(1)
 
     start         = '2025-05-05T06:30:00-07:00'
@@ -209,7 +208,6 @@ def main():
     cvd_window    = deque(maxlen=WINDOW_SIZE)
     price_window  = deque(maxlen=WINDOW_SIZE)
     volume_window = deque(maxlen=WINDOW_SIZE)
-    session_trend = None
     last_signal   = None  # track last entry direction
     position      = None  # 'bullish' or 'bearish'
     stop_price    = None
@@ -225,16 +223,6 @@ def main():
               f"L:{bar['low']:.2f} C:{bar['close']:.2f} "
               f"Vol:{bar['volume']} CVD:{bar['cvd']} "
               f"Color:{bar['cvd_color']}")
-
-        # Initialize session trend
-        if session_trend is None:
-            if bar['close'] > bar['open']:
-                session_trend = 'bullish'
-            elif bar['close'] < bar['open']:
-                session_trend = 'bearish'
-            else:
-                session_trend = 'none'
-            print(f"  → Session trend based on first bar: {session_trend}\n")
 
         # Stop-loss or take-profit handling
         if position == 'bullish':
@@ -298,22 +286,17 @@ def main():
             print("    → filtered: volume below recent average")
             breakout = 'none'
 
-        # Session trend filter
-        if breakout in ('bullish','bearish') and session_trend in ('bullish','bearish') and breakout != session_trend:
-            print(f"    → filtered: breaks against session trend ({session_trend})")
-            breakout = 'none'
-
         # Emit entry
         if breakout in ('bullish','bearish'):
             entry_price = bar['close']
             if breakout == 'bullish':
-                stop_price    = min(list(price_window))
-                R             = entry_price - stop_price
-                target_price  = entry_price + R * R_MULTIPLE
+                stop_price   = min(list(price_window))
+                R            = entry_price - stop_price
+                target_price = entry_price + R * R_MULTIPLE
             else:
-                stop_price    = max(list(price_window))
-                R             = stop_price - entry_price
-                target_price  = entry_price - R * R_MULTIPLE
+                stop_price   = max(list(price_window))
+                R            = stop_price - entry_price
+                target_price = entry_price - R * R_MULTIPLE
 
             print(f"    → ENTRY SIGNAL: {breakout.upper()}")
             print(f"       Stop price:   {stop_price:.2f}")
